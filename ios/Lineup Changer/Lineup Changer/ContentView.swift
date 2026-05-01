@@ -30,10 +30,11 @@ enum FieldPosition: String, CaseIterable, Identifiable, Codable {
     }
 }
 
-enum PlayerStatus: String, Codable {
+enum PlayerStatus: String, CaseIterable, Codable {
     case active
-    case unavailable
     case injured
+    case unavailable
+    case guest
 }
 
 struct PlayerGameChangerStats: Codable, Equatable {
@@ -53,53 +54,88 @@ struct PlayerGameChangerStats: Codable, Equatable {
 }
 
 struct Player: Identifiable, Codable, Equatable {
-    var id = UUID()
+    let id: UUID
     var name: String
-    var number: String = ""
-    var speedRating: Int = 1
-    var status: PlayerStatus = .active
+    var number: String
+    var cell: String
+    var status: PlayerStatus
+    var positionRatings: [FieldPosition: Int]
+    var speedRating: Int
     var gameChangerStats: PlayerGameChangerStats?
-    // Batting average removed
 
-    // Key = position, value = rating from 1 to 5.
-    // 1 = best, 5 = worst.
-    // If a position is missing, that player is not considered for that position.
-    var positionRatings: [FieldPosition: Int] = [:]
-
-    init(id: UUID = UUID(), name: String, number: String = "", speedRating: Int = 1, status: PlayerStatus = .active, gameChangerStats: PlayerGameChangerStats? = nil, positionRatings: [FieldPosition: Int] = [:]) {
+    init(id: UUID = UUID(),
+         name: String,
+         number: String = "",
+         cell: String = "",
+         status: PlayerStatus = .active,
+         positionRatings: [FieldPosition: Int] = [:],
+         speedRating: Int = 1,
+         gameChangerStats: PlayerGameChangerStats? = nil) {
         self.id = id
         self.name = name
         self.number = number
-        self.speedRating = speedRating
+        self.cell = cell
         self.status = status
-        self.gameChangerStats = gameChangerStats
         self.positionRatings = positionRatings
+        self.speedRating = speedRating
+        self.gameChangerStats = gameChangerStats
     }
 
-    enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey {
         case id
         case name
         case number
-        case speedRating
+        case cell
         case status
-        case gameChangerStats
         case positionRatings
+        case speedRating
+        case gameChangerStats
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(UUID.self, forKey: .id)
-        name = try container.decode(String.self, forKey: .name)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
         number = try container.decodeIfPresent(String.self, forKey: .number) ?? ""
-        speedRating = try container.decodeIfPresent(Int.self, forKey: .speedRating) ?? 1
+        cell = try container.decodeIfPresent(String.self, forKey: .cell) ?? ""
         status = try container.decodeIfPresent(PlayerStatus.self, forKey: .status) ?? .active
-        gameChangerStats = try container.decodeIfPresent(PlayerGameChangerStats.self, forKey: .gameChangerStats)
         positionRatings = try container.decodeIfPresent([FieldPosition: Int].self, forKey: .positionRatings) ?? [:]
+        speedRating = try container.decodeIfPresent(Int.self, forKey: .speedRating) ?? 1
+        gameChangerStats = try container.decodeIfPresent(PlayerGameChangerStats.self, forKey: .gameChangerStats)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(number, forKey: .number)
+        try container.encode(cell, forKey: .cell)
+        try container.encode(status, forKey: .status)
+        try container.encode(positionRatings, forKey: .positionRatings)
+        try container.encode(speedRating, forKey: .speedRating)
+        try container.encodeIfPresent(gameChangerStats, forKey: .gameChangerStats)
     }
 }
 
+struct Coach: Identifiable, Codable, Equatable {
+    let id: UUID
+    var name: String
+    var number: String
+    var cell: String
+
+    init(id: UUID = UUID(), name: String, number: String = "", cell: String = "") {
+        self.id = id
+        self.name = name
+        self.number = number
+        self.cell = cell
+    }
+}
+
+
+
 struct AppState: Codable {
     var players: [Player]
+    var coaches: [Coach]?
     var pitcherID: UUID?
     var catcherID: UUID?
     var lineup: [FieldPosition: Player]
@@ -113,6 +149,8 @@ struct AppState: Codable {
     var showBenchOnField: Bool
     var showOnlyNineBattersAndDH: Bool
     var showSlowSpeedBattingWarnings: Bool
+    var fallBallEnabled: Bool?
+    var fallBallYouthEnabled: Bool?
     var battingOrderIDs: [UUID]
     var designatedHitterID: UUID?
     var designatedHitterForID: UUID?
@@ -123,6 +161,7 @@ struct AppState: Codable {
 
 struct TeamSnapshot: Codable {
     var players: [Player]
+    var coaches: [Coach]?
     var pitcherID: UUID?
     var catcherID: UUID?
     var lineup: [FieldPosition: Player]
@@ -156,6 +195,15 @@ final class LineupViewModel: ObservableObject {
     @Published var showBenchOnField = true { didSet { save() } }
     @Published var showOnlyNineBattersAndDH = false { didSet { save() } }
     @Published var showSlowSpeedBattingWarnings = true { didSet { save() } }
+    @Published var fallBallEnabled = false {
+        didSet {
+            if !fallBallEnabled {
+                fallBallYouthEnabled = false
+            }
+            save()
+        }
+    }
+    @Published var fallBallYouthEnabled = false { didSet { save() } }
     @Published var battingOrderIDs: [UUID] = [] { didSet { save() } }
     @Published var designatedHitterID: UUID? { didSet { save() } }
     @Published var designatedHitterForID: UUID? { didSet { save() } }
@@ -167,6 +215,10 @@ final class LineupViewModel: ObservableObject {
     private var isApplyingSavedState = false
 
     private let saveKey = "YouthPositionRanker.appState.v3"
+
+    init() {
+        load()
+    }
 
     var selectedTeamName: String {
         guard teamNames.indices.contains(selectedTeamIndex) else { return "Team \(selectedTeamIndex + 1)" }
@@ -307,6 +359,18 @@ final class LineupViewModel: ObservableObject {
         players[index].number = trimmed
         save()
     }
+    
+    func updatePlayerCell(playerID: UUID, newCell: String) {
+
+        let trimmedCell = newCell.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let index = players.firstIndex(where: { $0.id == playerID }) else { return }
+
+        players[index].cell = trimmedCell
+
+        save()
+
+    }
 
     func updatePlayerSpeed(playerID: UUID, speedRating: Int) {
         guard let index = players.firstIndex(where: { $0.id == playerID }) else { return }
@@ -363,6 +427,11 @@ final class LineupViewModel: ObservableObject {
     }
 
     func assignLineup() {
+        if fallBallEnabled {
+            assignFallBallLineups()
+            return
+        }
+
         var assignments: [FieldPosition: Player] = [:]
         var usedPlayerIDs = Set<UUID>()
         let eligiblePlayers = activePlayers
@@ -409,6 +478,132 @@ final class LineupViewModel: ObservableObject {
         save()
     }
 
+    private func assignFallBallLineups() {
+        guard !activePlayers.isEmpty else { return }
+
+        var playCounts = Dictionary(uniqueKeysWithValues: activePlayers.map { ($0.id, 0) })
+        var benchCounts = Dictionary(uniqueKeysWithValues: activePlayers.map { ($0.id, 0) })
+        var generatedLineups: [Int: [FieldPosition: Player]] = [:]
+        var generatedPitchers: [Int: UUID] = [:]
+        var generatedCatchers: [Int: UUID] = [:]
+        var usedFallBallPitcherIDs = Set<UUID>()
+
+        for inning in 1...7 {
+            let assignment = fallBallYouthEnabled
+                ? randomYouthFallBallAssignment(playCounts: &playCounts, benchCounts: &benchCounts)
+                : randomFallBallAssignment(playCounts: &playCounts, benchCounts: &benchCounts, usedPitcherIDs: &usedFallBallPitcherIDs)
+
+            generatedLineups[inning] = assignment
+
+            if let pitcher = assignment[.pitcher] {
+                generatedPitchers[inning] = pitcher.id
+            }
+
+            if let catcher = assignment[.catcher] {
+                generatedCatchers[inning] = catcher.id
+            }
+        }
+
+        inningLineups = generatedLineups
+        inningPitcherIDs = generatedPitchers
+        inningCatcherIDs = generatedCatchers
+        selectedInning = 1
+        lineup = generatedLineups[1] ?? [:]
+        pitcherID = generatedPitchers[1]
+        catcherID = fallBallYouthEnabled ? generatedCatchers[1] : catcherID
+        save()
+    }
+
+    private func randomFallBallAssignment(playCounts: inout [UUID: Int], benchCounts: inout [UUID: Int], usedPitcherIDs: inout Set<UUID>) -> [FieldPosition: Player] {
+        var assignments: [FieldPosition: Player] = [:]
+        var usedPlayerIDs = Set<UUID>()
+        let eligiblePlayers = activePlayers
+
+        let availablePitchers = eligiblePlayers.filter { $0.positionRatings[.pitcher] != nil }
+        let pitcherCandidates = availablePitchers.filter { !usedPitcherIDs.contains($0.id) }
+        let selectedPitcher = (pitcherCandidates.isEmpty ? availablePitchers : pitcherCandidates)
+            .shuffled()
+            .sorted { lhs, rhs in
+                playCounts[lhs.id, default: 0] < playCounts[rhs.id, default: 0]
+            }
+            .first
+
+        if let pitcher = selectedPitcher {
+            assignments[.pitcher] = pitcher
+            usedPlayerIDs.insert(pitcher.id)
+            usedPitcherIDs.insert(pitcher.id)
+            playCounts[pitcher.id, default: 0] += 1
+        }
+
+        if let catcher = eligiblePlayers.first(where: { $0.id == catcherID }), !usedPlayerIDs.contains(catcher.id) {
+            assignments[.catcher] = catcher
+            usedPlayerIDs.insert(catcher.id)
+            playCounts[catcher.id, default: 0] += 1
+        }
+
+        for position in FieldPosition.autoAssignedPositions.shuffled() {
+            let candidates = eligiblePlayers
+                .filter { player in
+                    !usedPlayerIDs.contains(player.id) && player.positionRatings[position] != nil
+                }
+                .sorted { lhs, rhs in
+                    let lhsPlays = playCounts[lhs.id, default: 0]
+                    let rhsPlays = playCounts[rhs.id, default: 0]
+
+                    if lhsPlays == rhsPlays {
+                        return Bool.random()
+                    }
+
+                    return lhsPlays < rhsPlays
+                }
+
+            if let selectedPlayer = candidates.first {
+                assignments[position] = selectedPlayer
+                usedPlayerIDs.insert(selectedPlayer.id)
+                playCounts[selectedPlayer.id, default: 0] += 1
+            }
+        }
+
+        updateBenchCounts(usedPlayerIDs: usedPlayerIDs, benchCounts: &benchCounts)
+        return assignments
+    }
+
+    private func randomYouthFallBallAssignment(playCounts: inout [UUID: Int], benchCounts: inout [UUID: Int]) -> [FieldPosition: Player] {
+        var assignments: [FieldPosition: Player] = [:]
+        var usedPlayerIDs = Set<UUID>()
+        let eligiblePlayers = activePlayers
+
+        for position in FieldPosition.allCases.shuffled() {
+            let candidates = eligiblePlayers
+                .filter { !usedPlayerIDs.contains($0.id) }
+                .sorted { lhs, rhs in
+                    let lhsPlays = playCounts[lhs.id, default: 0]
+                    let rhsPlays = playCounts[rhs.id, default: 0]
+
+                    if lhsPlays == rhsPlays {
+                        return Bool.random()
+                    }
+
+                    return lhsPlays < rhsPlays
+                }
+
+            if let selectedPlayer = candidates.first {
+                assignments[position] = selectedPlayer
+                usedPlayerIDs.insert(selectedPlayer.id)
+                playCounts[selectedPlayer.id, default: 0] += 1
+            }
+        }
+
+        updateBenchCounts(usedPlayerIDs: usedPlayerIDs, benchCounts: &benchCounts)
+        return assignments
+    }
+
+    private func updateBenchCounts(usedPlayerIDs: Set<UUID>, benchCounts: inout [UUID: Int]) {
+        for player in activePlayers where !usedPlayerIDs.contains(player.id) {
+            benchCounts[player.id, default: 0] += 1
+        }
+    }
+
     func clearInning() {
         lineup = [:]
         pitcherID = nil
@@ -429,10 +624,24 @@ final class LineupViewModel: ObservableObject {
         save()
     }
 
+    func deleteAllPlayerData() {
+        players = []
+        battingOrderIDs = []
+        pitcherID = nil
+        catcherID = nil
+        lineup = [:]
+        inningLineups = [:]
+        inningPitcherIDs = [:]
+        inningCatcherIDs = [:]
+        designatedHitterID = nil
+        designatedHitterForID = nil
+        save()
+    }
+
     func setCurrentLineupForAllInnings() {
         saveCurrentInningState()
 
-        for inning in 1...7 {
+        for inning in 1...9 {
             inningLineups[inning] = lineup
 
             if let pitcherID {
@@ -453,7 +662,7 @@ final class LineupViewModel: ObservableObject {
 
     func selectInning(_ inning: Int) {
         saveCurrentInningState()
-        selectedInning = min(max(inning, 1), 7)
+        selectedInning = min(max(inning, 1), 9)
 
         if inningLineups[selectedInning] == nil, selectedInning > 1 {
             inningLineups[selectedInning] = inningLineups[selectedInning - 1] ?? lineup
@@ -579,9 +788,9 @@ final class LineupViewModel: ObservableObject {
     }
 
     func copyCurrentInningForwardIfNeeded() {
-        guard selectedInning < 7 else { return }
+        guard selectedInning < 9 else { return }
 
-        for inning in (selectedInning + 1)...7 {
+        for inning in (selectedInning + 1)...9 {
             if inningLineups[inning] == nil || inningLineups[inning]?.isEmpty == true {
                 inningLineups[inning] = lineup
                 inningPitcherIDs[inning] = pitcherID
@@ -644,6 +853,8 @@ final class LineupViewModel: ObservableObject {
             showBenchOnField: showBenchOnField,
             showOnlyNineBattersAndDH: showOnlyNineBattersAndDH,
             showSlowSpeedBattingWarnings: showSlowSpeedBattingWarnings,
+            fallBallEnabled: fallBallEnabled,
+            fallBallYouthEnabled: fallBallYouthEnabled,
             battingOrderIDs: battingOrderIDs,
             designatedHitterID: designatedHitterID,
             designatedHitterForID: designatedHitterForID,
@@ -687,13 +898,75 @@ final class LineupViewModel: ObservableObject {
         showBenchOnField = state.showBenchOnField
         showOnlyNineBattersAndDH = state.showOnlyNineBattersAndDH
         showSlowSpeedBattingWarnings = state.showSlowSpeedBattingWarnings
+        fallBallEnabled = state.fallBallEnabled ?? false
+        fallBallYouthEnabled = fallBallEnabled ? (state.fallBallYouthEnabled ?? false) : false
+    }
+
+    // MARK: - Export Helper Methods (Omit GameChanger Stats)
+
+    private func playerWithoutGameChangerStats(_ player: Player) -> Player {
+        var copy = player
+        copy.gameChangerStats = nil
+        return copy
+    }
+
+    private func lineupWithoutGameChangerStats(_ lineup: [FieldPosition: Player]) -> [FieldPosition: Player] {
+        Dictionary(uniqueKeysWithValues: lineup.map { position, player in
+            (position, playerWithoutGameChangerStats(player))
+        })
+    }
+
+    private func inningLineupsWithoutGameChangerStats(_ lineups: [Int: [FieldPosition: Player]]) -> [Int: [FieldPosition: Player]] {
+        Dictionary(uniqueKeysWithValues: lineups.map { inning, lineup in
+            (inning, lineupWithoutGameChangerStats(lineup))
+        })
+    }
+
+    private func teamSnapshotWithoutGameChangerStats(_ snapshot: TeamSnapshot) -> TeamSnapshot {
+        TeamSnapshot(
+            players: snapshot.players.map { playerWithoutGameChangerStats($0) },
+            pitcherID: snapshot.pitcherID,
+            catcherID: snapshot.catcherID,
+            lineup: lineupWithoutGameChangerStats(snapshot.lineup),
+            selectedInning: snapshot.selectedInning,
+            inningLineups: inningLineupsWithoutGameChangerStats(snapshot.inningLineups),
+            inningPitcherIDs: snapshot.inningPitcherIDs,
+            inningCatcherIDs: snapshot.inningCatcherIDs,
+            battingOrderIDs: snapshot.battingOrderIDs,
+            designatedHitterID: snapshot.designatedHitterID,
+            designatedHitterForID: snapshot.designatedHitterForID
+        )
     }
 
     func exportAppStateData() -> Data {
+        var exportState = currentAppState()
+        exportState.players = exportState.players.map { playerWithoutGameChangerStats($0) }
+        exportState.lineup = lineupWithoutGameChangerStats(exportState.lineup)
+        exportState.inningLineups = inningLineupsWithoutGameChangerStats(exportState.inningLineups)
+        exportState.teamSnapshots = exportState.teamSnapshots?.map { teamSnapshotWithoutGameChangerStats($0) }
+
         do {
-            return try JSONEncoder().encode(currentAppState())
+            return try JSONEncoder().encode(exportState)
         } catch {
             print("Failed to export app state: \(error)")
+            return Data()
+        }
+    }
+
+    func exportPlayerNameNumberData() -> Data {
+        struct SharedPlayer: Codable {
+            let name: String
+            let number: String
+        }
+
+        let sharedPlayers = players.map { player in
+            SharedPlayer(name: player.name, number: player.number)
+        }
+
+        do {
+            return try JSONEncoder().encode(sharedPlayers)
+        } catch {
+            print("Failed to export player name and number data: \(error)")
             return Data()
         }
     }
@@ -701,6 +974,27 @@ final class LineupViewModel: ObservableObject {
     func importAppStateData(_ data: Data) throws {
         let state = try JSONDecoder().decode(AppState.self, from: data)
         applyAppState(state)
+        save()
+    }
+
+    func importPlayerNameNumberData(_ data: Data) throws {
+        struct SharedPlayer: Codable {
+            let name: String
+            let number: String
+        }
+
+        let sharedPlayers = try JSONDecoder().decode([SharedPlayer].self, from: data)
+
+        for sharedPlayer in sharedPlayers {
+            let trimmedName = sharedPlayer.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedNumber = sharedPlayer.number.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard !trimmedName.isEmpty else { continue }
+
+            players.append(Player(name: trimmedName, number: trimmedNumber))
+        }
+
+        syncBattingOrder()
         save()
     }
 
@@ -716,7 +1010,7 @@ final class LineupViewModel: ObservableObject {
 
         guard let headerRowIndex = rows.firstIndex(where: { row in
             let normalizedRow = row.map { normalizeHeader($0) }
-            return normalizedRow.contains("first") && normalizedRow.contains("last")
+            return (normalizedRow.contains("first") && normalizedRow.contains("last")) || normalizedRow.contains("player") || normalizedRow.contains("name")
         }) else {
             throw NSError(domain: "GameChangerImport", code: 3, userInfo: [NSLocalizedDescriptionKey: "Could not find GameChanger player header row."])
         }
@@ -734,6 +1028,7 @@ final class LineupViewModel: ObservableObject {
             return nil
         }
 
+        let numberIndex = columnIndex(["Number", "No", "#", "Jersey", "Jersey Number"])
         let playerIndex = columnIndex(["Player", "Name", "Player Name", "Athlete"])
         let firstNameIndex = columnIndex(["First", "First Name", "FirstName"])
         let lastNameIndex = columnIndex(["Last", "Last Name", "LastName"])
@@ -748,6 +1043,7 @@ final class LineupViewModel: ObservableObject {
         let strikeoutsIndex = columnIndex(["SO", "K", "Strikeouts", "Strike Outs"])
 
         var importedStatsByName: [String: PlayerGameChangerStats] = [:]
+        var importedStatsByNumber: [String: PlayerGameChangerStats] = [:]
 
         for row in statRows {
             let playerName: String
@@ -761,9 +1057,10 @@ final class LineupViewModel: ObservableObject {
             }
 
             let normalizedName = normalizePlayerName(playerName)
-            guard !normalizedName.isEmpty else { continue }
+            let normalizedNumber = value(from: row, at: numberIndex).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalizedName.isEmpty || !normalizedNumber.isEmpty else { continue }
 
-            importedStatsByName[normalizedName] = PlayerGameChangerStats(
+            let stats = PlayerGameChangerStats(
                 avg: value(from: row, at: avgIndex),
                 obp: value(from: row, at: obpIndex),
                 ops: value(from: row, at: opsIndex),
@@ -774,12 +1071,22 @@ final class LineupViewModel: ObservableObject {
                 walks: value(from: row, at: walksIndex),
                 strikeouts: value(from: row, at: strikeoutsIndex)
             )
+
+            if !normalizedName.isEmpty {
+                importedStatsByName[normalizedName] = stats
+            }
+
+            if !normalizedNumber.isEmpty && normalizedNumber != "—" {
+                importedStatsByNumber[normalizedNumber] = stats
+            }
         }
 
         var matchCount = 0
         for index in players.indices {
             let normalizedName = normalizePlayerName(players[index].name)
-            if let stats = importedStatsByName[normalizedName] {
+            let normalizedNumber = players[index].number.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if let stats = importedStatsByName[normalizedName] ?? importedStatsByNumber[normalizedNumber] {
                 players[index].gameChangerStats = stats
                 matchCount += 1
             }
@@ -808,7 +1115,7 @@ final class LineupViewModel: ObservableObject {
         let rowHeight: CGFloat = 26
         let orderColumnWidth: CGFloat = 42
         let nameColumnWidth: CGFloat = 190
-        let inningColumnWidth = (pageWidth - (margin * 2) - orderColumnWidth - nameColumnWidth) / 7
+        let inningColumnWidth = (pageWidth - (margin * 2) - orderColumnWidth - nameColumnWidth) / 9
 
         let orderedPlayers = battingOrderIDs
             .compactMap { player(for: $0) }
@@ -841,7 +1148,7 @@ final class LineupViewModel: ObservableObject {
                 drawPDFCell("#", x: margin, y: y, width: orderColumnWidth, height: headerHeight, isHeader: true)
                 drawPDFCell("Player", x: margin + orderColumnWidth, y: y, width: nameColumnWidth, height: headerHeight, isHeader: true)
 
-                for inning in 1...7 {
+                for inning in 1...9 {
                     let x = margin + orderColumnWidth + nameColumnWidth + CGFloat(inning - 1) * inningColumnWidth
                     drawPDFCell("\(inning)", x: x, y: y, width: inningColumnWidth, height: headerHeight, isHeader: true)
                 }
@@ -853,7 +1160,7 @@ final class LineupViewModel: ObservableObject {
                     drawPDFCell("\(playerIndex + 1)", x: margin, y: y, width: orderColumnWidth, height: rowHeight)
                     drawPDFCell(displayLabel(for: player), x: margin + orderColumnWidth, y: y, width: nameColumnWidth, height: rowHeight, alignment: .left)
 
-                    for inning in 1...7 {
+                    for inning in 1...9 {
                         let inningLineup = inningLineups[inning] ?? [:]
                         let positionText = positionForPlayer(player, in: inningLineup)
                         let x = margin + orderColumnWidth + nameColumnWidth + CGFloat(inning - 1) * inningColumnWidth
@@ -953,6 +1260,12 @@ final class LineupViewModel: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private func csvEscapedValue(_ value: String) -> String {
+        let needsQuotes = value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r")
+        let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
+        return needsQuotes ? "\"\(escaped)\"" : escaped
+    }
+
     private func parseCSV(_ text: String) -> [[String]] {
         var rows: [[String]] = []
         var row: [String] = []
@@ -1019,42 +1332,95 @@ final class LineupViewModel: ObservableObject {
 
         do {
             isApplyingSavedState = true
+            defer { isApplyingSavedState = false }
+
             let state = try JSONDecoder().decode(AppState.self, from: data)
             applyAppState(state)
-            isApplyingSavedState = false
         } catch {
             isApplyingSavedState = false
             print("Failed to load app state: \(error)")
+            UserDefaults.standard.set(data, forKey: "LineupChangerRecoveryBackup")
         }
     }
 }
 
 // MARK: - Main UI
 
-struct ContentView: View {
-    @StateObject private var viewModel = LineupViewModel()
+struct RootView: View {
+    @State private var showSplash = true
 
     var body: some View {
-        TabView {
+        ZStack {
+            ContentView()
+
+            if showSplash {
+                SplashScreenView()
+                    .transition(.opacity)
+                    .zIndex(1)
+            }
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                withAnimation(.easeOut(duration: 0.35)) {
+                    showSplash = false
+                }
+            }
+        }
+    }
+}
+
+struct SplashScreenView: View {
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            Image("SplashScreen")
+                .resizable()
+                .scaledToFill()
+                .ignoresSafeArea()
+        }
+    }
+}
+
+enum MainTab: Hashable {
+    case field
+    case lineup
+    case players
+    case settings
+}
+
+struct ContentView: View {
+    @StateObject private var viewModel = LineupViewModel()
+    @State private var selectedTab: MainTab = .field
+
+    var body: some View {
+        TabView(selection: $selectedTab) {
             AssignmentView(viewModel: viewModel)
                 .tabItem {
                     Label("Field", systemImage: "baseball.diamond.bases")
                 }
+                .tag(MainTab.field)
 
             LineupOrderView(viewModel: viewModel)
                 .tabItem {
                     Label("Lineup", systemImage: "list.number")
                 }
+                .tag(MainTab.lineup)
 
             PlayerListView(viewModel: viewModel)
                 .tabItem {
                     Label("Players", systemImage: "person.3")
                 }
+                .tag(MainTab.players)
 
             SettingsView(viewModel: viewModel)
                 .tabItem {
                     Label("Settings", systemImage: "gearshape")
                 }
+                .tag(MainTab.settings)
+        }
+        .onAppear {
+            selectedTab = viewModel.players.isEmpty ? .players : .field
         }
     }
 }
@@ -1143,15 +1509,59 @@ struct PlayerListView: View {
                 .padding(.horizontal)
 
                 List {
-                    ForEach(viewModel.players) { player in
+                    ForEach(viewModel.players.sorted { lhs, rhs in
+                        let lhsNumber = Int(lhs.number)
+                        let rhsNumber = Int(rhs.number)
+
+                        switch (lhsNumber, rhsNumber) {
+                        case let (l?, r?):
+                            return l < r
+                        case (nil, nil):
+                            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+                        case (nil, _?):
+                            return false
+                        case (_?, nil):
+                            return true
+                        }
+                    }) { player in
                         NavigationLink {
                             PlayerDetailView(viewModel: viewModel, player: player)
                         } label: {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(viewModel.displayLabel(for: player))
-                                    .font(.headline)
+                                HStack(spacing: 4) {
+                                    Text(viewModel.displayLabel(for: player))
+                                        .font(.headline)
+                                    if player.status == .guest {
+                                        Text("(Guest)")
+                                            .font(.headline)
+                                            .italic()
+                                            .foregroundStyle(.red)
+                                    }
+                                }
+                                
+                                if !player.cell.filter({ $0.isNumber }).isEmpty {
 
-                                if player.status != .active {
+                                    Menu(player.cell) {
+
+                                        if let callURL = URL(string: "tel://\(player.cell.filter { $0.isNumber })") {
+
+                                            Link("Call", destination: callURL)
+
+                                        }
+
+                                        if let textURL = URL(string: "sms:\(player.cell.filter { $0.isNumber })") {
+
+                                            Link("Text", destination: textURL)
+
+                                        }
+
+                                    }
+
+                                    .font(.caption)
+
+                                }
+                                
+                                if player.status != .active && player.status != .guest {
                                     Text(player.status == .injured ? "Injured" : "Unavailable")
                                         .font(.caption)
                                         .foregroundStyle(player.status == .injured ? .red : .orange)
@@ -1180,6 +1590,11 @@ struct PlayerListView: View {
 
                             Button("Unavailable") {
                                 viewModel.setPlayerStatus(playerID: player.id, status: .unavailable)
+                            }
+                            .tint(.red)
+
+                            Button("Guest") {
+                                viewModel.setPlayerStatus(playerID: player.id, status: .guest)
                             }
                             .tint(.red)
 
@@ -1231,6 +1646,7 @@ struct PlayerDetailView: View {
 
     @State private var editedName: String = ""
     @State private var editedNumber: String = ""
+    @State private var editedCellNumber: String = ""
     @State private var selectedSpeedRating: Int = 1
     @State private var selectedPosition: FieldPosition = .firstBase
     @State private var selectedRating: Int = 1
@@ -1253,6 +1669,24 @@ struct PlayerDetailView: View {
                         viewModel.updatePlayerNumber(playerID: player.id, newNumber: editedNumber)
                     }
 
+                TextField("Cell #", text: $editedCellNumber)
+                    .keyboardType(.numberPad)
+                    .onChange(of: editedCellNumber) { _, newValue in
+                        editedCellNumber = formatPhoneNumber(newValue)
+                    }
+                
+                if !editedCellNumber.filter({ $0.isNumber }).isEmpty {
+                    Menu("Contact \(editedCellNumber)") {
+                        if let callURL = URL(string: "tel://\(editedCellNumber.filter { $0.isNumber })") {
+                            Link("Call", destination: callURL)
+                        }
+
+                        if let textURL = URL(string: "sms:\(editedCellNumber.filter { $0.isNumber })") {
+                            Link("Text", destination: textURL)
+                        }
+                    }
+                }
+
                 Picker("Steal Ability", selection: $selectedSpeedRating) {
                     Text("1 - Steal").tag(1)
                     Text("2 - No Steal").tag(2)
@@ -1262,6 +1696,7 @@ struct PlayerDetailView: View {
                 Button("Save Player Info") {
                     viewModel.renamePlayer(playerID: player.id, newName: editedName)
                     viewModel.updatePlayerNumber(playerID: player.id, newNumber: editedNumber)
+                    viewModel.updatePlayerCell(playerID: player.id, newCell: editedCellNumber)
                     viewModel.updatePlayerSpeed(playerID: player.id, speedRating: selectedSpeedRating)
                 }
             }
@@ -1334,8 +1769,37 @@ struct PlayerDetailView: View {
         .onAppear {
             editedName = currentPlayer?.name ?? player.name
             editedNumber = currentPlayer?.number ?? player.number
+            editedCellNumber = currentPlayer?.cell ?? player.cell
             selectedSpeedRating = currentPlayer?.speedRating ?? player.speedRating
         }
+    }
+
+    // Helper function for formatting phone number as (XXX)XXX-XXXX
+    private func formatPhoneNumber(_ number: String) -> String {
+        let digits = number.filter { $0.isNumber }
+        var result = ""
+
+        let limited = String(digits.prefix(10))
+
+        for (index, digit) in limited.enumerated() {
+            switch index {
+            case 0:
+                result += "("
+                result.append(digit)
+            case 2:
+                result.append(digit)
+                result += ")"
+            case 3:
+                result.append(digit)
+            case 5:
+                result.append(digit)
+                result += "-"
+            default:
+                result.append(digit)
+            }
+        }
+
+        return result
     }
 }
 
@@ -1357,41 +1821,45 @@ struct AssignmentView: View {
                         get: { viewModel.selectedInning },
                         set: { viewModel.selectInning($0) }
                     )) {
-                        ForEach(1...7, id: \.self) { inning in
+                        ForEach(1...9, id: \.self) { inning in
                             Text("\(inning)").tag(inning)
                         }
                     }
                     .pickerStyle(.segmented)
                 }
 
-                Section("Manual Positions") {
-                    Picker("Pitcher", selection: Binding(
-                        get: { viewModel.pitcherID },
-                        set: { newValue in
-                            viewModel.updatePitcher(newValue)
+                if !viewModel.fallBallYouthEnabled {
+                    Section("Manual Positions") {
+                        if !viewModel.fallBallEnabled {
+                            Picker("Pitcher", selection: Binding(
+                                get: { viewModel.pitcherID },
+                                set: { newValue in
+                                    viewModel.updatePitcher(newValue)
+                                }
+                            )) {
+                                Text("Choose pitcher").tag(UUID?.none)
+                                ForEach(viewModel.activePlayers) { player in
+                                    Text(player.name).tag(Optional(player.id))
+                                }
+                            }
                         }
-                    )) {
-                        Text("Choose pitcher").tag(UUID?.none)
-                        ForEach(viewModel.activePlayers) { player in
-                            Text(player.name).tag(Optional(player.id))
-                        }
-                    }
 
-                    Picker("Catcher", selection: Binding(
-                        get: { viewModel.catcherID },
-                        set: { newValue in
-                            viewModel.updateCatcher(newValue)
-                        }
-                    )) {
-                        Text("Choose catcher").tag(UUID?.none)
-                        ForEach(viewModel.activePlayers) { player in
-                            Text(player.name).tag(Optional(player.id))
+                        Picker("Catcher", selection: Binding(
+                            get: { viewModel.catcherID },
+                            set: { newValue in
+                                viewModel.updateCatcher(newValue)
+                            }
+                        )) {
+                            Text("Choose catcher").tag(UUID?.none)
+                            ForEach(viewModel.activePlayers) { player in
+                                Text(player.name).tag(Optional(player.id))
+                            }
                         }
                     }
                 }
 
                 Section {
-                    Button("Auto-Fill Remaining Positions") {
+                    Button(viewModel.fallBallEnabled ? "Generate Fall Ball Lineups" : "Auto-Fill Remaining Positions") {
                         viewModel.assignLineup()
                     }
                     .buttonStyle(.borderedProminent)
@@ -1462,7 +1930,14 @@ struct AssignmentView: View {
                         } else {
                             ForEach(bench) { player in
                                 HStack {
-                                    Text(viewModel.displayLabel(for: player))
+                                    HStack(spacing: 4) {
+                                        Text(viewModel.displayLabel(for: player))
+                                        if player.status == .guest {
+                                            Text("(Guest)")
+                                                .italic()
+                                                .foregroundStyle(.red)
+                                        }
+                                    }
                                     Spacer()
 
                                     Button("Put In Field") {
@@ -1484,7 +1959,7 @@ struct AssignmentView: View {
                 }
 
                 Section("How assignment works") {
-                    Text("Each inning can have a different field lineup. When you set an inning, the app carries that lineup forward to later empty innings until you manually change or auto-fill those innings. Pitcher and catcher are selected manually. The app fills 1B, 2B, 3B, SS, LF, CF, and RF using the best available rating.")
+                    Text(viewModel.fallBallEnabled ? "Fall Ball generates all 9 innings at once and tries to share bench time evenly. Standard Fall Ball automatically uses a different pitcher each inning from players who have Pitcher listed on their profile, keeps catcher manual, then randomly assigns players only to positions listed on their profile. Youth mode randomly assigns all active players across every position, including pitcher and catcher." : "Each inning can have a different field lineup. When you set an inning, the app carries that lineup forward to later empty innings until you manually change or auto-fill those innings. Pitcher and catcher are selected manually. The app fills 1B, 2B, 3B, SS, LF, CF, and RF using the best available rating.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -1607,7 +2082,14 @@ struct LineupOrderView: View {
                                         .frame(width: 34, alignment: .leading)
 
                                     VStack(alignment: .leading, spacing: 3) {
-                                        Text(viewModel.displayLabel(for: player))
+                                        HStack(spacing: 4) {
+                                            Text(viewModel.displayLabel(for: player))
+                                            if player.status == .guest {
+                                                Text("(Guest)")
+                                                    .italic()
+                                                    .foregroundStyle(.red)
+                                            }
+                                        }
 
                                         if let stats = player.gameChangerStats {
                                             Text(stats.displayText)
@@ -1848,11 +2330,14 @@ struct BaseballFieldLineupView: View {
         let firstInitial = nameParts.first?.first.map { "\($0)." } ?? ""
         let initialLastName = firstInitial.isEmpty ? lastName : "\(firstInitial) \(lastName)"
 
+        let baseLabel: String
         if showFullNameAndNumber {
-            return player.number.isEmpty ? player.name : "#\(player.number) \(player.name)"
+            baseLabel = player.number.isEmpty ? player.name : "#\(player.number) \(player.name)"
+        } else {
+            baseLabel = player.number.isEmpty ? initialLastName : "#\(player.number) \(initialLastName)"
         }
 
-        return player.number.isEmpty ? initialLastName : "#\(player.number) \(initialLastName)"
+        return player.status == .guest ? "\(baseLabel) (Guest)" : baseLabel
     }
 
     private func label(for position: FieldPosition) -> String {
@@ -1916,11 +2401,15 @@ struct ImportDocumentPicker: UIViewControllerRepresentable {
 struct SettingsView: View {
     @ObservedObject var viewModel: LineupViewModel
     @State private var isShowingPlayerImportPicker = false
+    @State private var isImportingPlayerOnly = false
     @State private var isShowingGameChangerImportPicker = false
     @State private var backupStatusMessage = ""
     @State private var gameChangerStatusMessage = ""
     @State private var isShowingShareSheet = false
     @State private var shareURL: URL?
+    @State private var playerShareURL: URL?
+    @State private var isShowingDeletePlayerDialog = false
+    @State private var isShowingDeletePlayerDataConfirmation = false
     @State private var editedTeamName = ""
     @FocusState private var isTeamNameFocused: Bool
 
@@ -1957,62 +2446,96 @@ struct SettingsView: View {
                     Toggle("Warn when No Steal P/C bats after No Steal runner", isOn: $viewModel.showSlowSpeedBattingWarnings)
                 }
 
-                Section("Lineup Actions") {
-                    Button("Clear Current Inning", role: .destructive) {
-                        viewModel.clearInning()
-                    }
+                Section("Fall Ball") {
+                    Toggle("Fall Ball", isOn: $viewModel.fallBallEnabled)
 
-                    Button("Clear All Innings", role: .destructive) {
-                        viewModel.clearAllInnings()
-                    }
+                    if viewModel.fallBallEnabled {
+                        Toggle("Youth", isOn: $viewModel.fallBallYouthEnabled)
 
-                    Button("Set Current Lineup for All Innings") {
-                        viewModel.setCurrentLineupForAllInnings()
-                    }
-                }
-
-                Section("GameChanger") {
-                    Button("Import GameChanger Stats") {
-                        isShowingGameChangerImportPicker = true
-                    }
-
-                    Button("Clear GameChanger Stats", role: .destructive) {
-                        viewModel.clearGameChangerStats()
-                        gameChangerStatusMessage = "GameChanger stats cleared."
-                    }
-
-                    Text("Import a GameChanger CSV export. Players are matched by first and last name. Imported stats shown on the Lineup tab: AVG, OBP, OPS, SLG, H, RBI, R, BB, and SO.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-
-                    if !gameChangerStatusMessage.isEmpty {
-                        Text(gameChangerStatusMessage)
+                        Text("Fall Ball generates all 9 fielding innings randomly while trying to keep bench time balanced. Youth mode removes manual pitcher/catcher selection and randomly assigns every active player across every position.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
                 }
 
-                Section("Backup") {
-                    Button("Share Player Data") {
-                        do {
-                            let data = viewModel.exportAppStateData()
-                            let url = FileManager.default.temporaryDirectory.appendingPathComponent("YouthBaseballAI-Backup.json")
-                            try data.write(to: url, options: .atomic)
-                            shareURL = url
-                            isShowingShareSheet = true
-                            backupStatusMessage = "Ready to share backup file."
-                        } catch {
-                            backupStatusMessage = "Share failed: \(error.localizedDescription)"
-                        }
-                    }
 
-                    Button("Import Player Data") {
+
+                Section("Player") {
+                    Button("Import Player") {
+                        isImportingPlayerOnly = true
                         isShowingPlayerImportPicker = true
                     }
 
-                    Text("Share creates a JSON backup containing players, numbers, steal ability, position ratings, field lineups by inning, batting order, DH settings, and app settings. Import replaces the current app data with a previously saved backup file.")
+                    Button("Share Player") {
+                        do {
+                            let data = viewModel.exportPlayerNameNumberData()
+                            let url = FileManager.default.temporaryDirectory.appendingPathComponent("LineupChanger-Players.json")
+                            try data.write(to: url, options: .atomic)
+                            playerShareURL = url
+                            shareURL = url
+                            isShowingShareSheet = true
+                            backupStatusMessage = "Player file ready to share."
+                        } catch {
+                            backupStatusMessage = "Share player failed: \(error.localizedDescription)"
+                        }
+                    }
+
+                    Button("Delete Player", role: .destructive) {
+                        isShowingDeletePlayerDialog = true
+                    }
+
+                    Text("Import or share players only. This file includes only player names and numbers in JSON format.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                }
+
+                Section("Player Data") {
+                    Button("Import Player Data") {
+                        isImportingPlayerOnly = false
+                        isShowingPlayerImportPicker = true
+                    }
+
+                    Button("Share Player Data") {
+                        do {
+                            let data = viewModel.exportAppStateData()
+                            let url = FileManager.default.temporaryDirectory.appendingPathComponent("LineupChanger-Player-Data.json")
+                            try data.write(to: url, options: .atomic)
+                            shareURL = url
+                            isShowingShareSheet = true
+                            backupStatusMessage = "Player data file ready to share."
+                        } catch {
+                            backupStatusMessage = "Share player data failed: \(error.localizedDescription)"
+                        }
+                    }
+
+                    Button("Delete Player Data", role: .destructive) {
+                        isShowingDeletePlayerDataConfirmation = true
+                    }
+
+                    Text("Import or share the full backup. This includes players, numbers, steal ability, position ratings, field lineups by inning, batting order, DH settings, and app settings.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
+                    Section("GameChanger") {
+                        Button("Import GameChanger Stats") {
+                            isShowingGameChangerImportPicker = true
+                        }
+
+                        Button("Clear GameChanger Stats", role: .destructive) {
+                            viewModel.clearGameChangerStats()
+                            gameChangerStatusMessage = "GameChanger stats cleared."
+                        }
+
+                        Text("Import a GameChanger CSV export. Players are matched by first and last name. Imported stats shown on the Lineup tab: AVG, OBP, OPS, SLG, H, RBI, R, BB, and SO.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+
+                        if !gameChangerStatusMessage.isEmpty {
+                            Text(gameChangerStatusMessage)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
 
                     if !backupStatusMessage.isEmpty {
                         Text(backupStatusMessage)
@@ -2022,9 +2545,27 @@ struct SettingsView: View {
                 }
 
                 Section("About") {
-                    Text("Add players, give each player one or more positions, rate each position from 1 to 5, manually set pitcher and catcher, then auto-fill the rest of the field.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Add players, give each player one or more positions, rate each position from 1 to 5, manually set pitcher and catcher, then auto-fill the rest of the field.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+
+                        Divider()
+
+                        Text("Legal")
+                            .font(.headline)
+
+                        Text("© 2026 Richard C. Morris Jr. All rights reserved.")
+                            .font(.footnote)
+
+                        Text("This application and its contents are proprietary. Unauthorized copying, distribution, modification, or reverse engineering is strictly prohibited.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+
+                        Text("This app is provided \"as is\" without warranty of any kind, express or implied, including but not limited to fitness for a particular purpose.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             .navigationTitle("Settings")
@@ -2050,8 +2591,13 @@ struct SettingsView: View {
                     onPick: { url in
                         do {
                             let data = try Data(contentsOf: url)
-                            try viewModel.importAppStateData(data)
-                            backupStatusMessage = "Import complete."
+                            if isImportingPlayerOnly {
+                                try viewModel.importPlayerNameNumberData(data)
+                                backupStatusMessage = "Player import complete."
+                            } else {
+                                try viewModel.importAppStateData(data)
+                                backupStatusMessage = "Player data import complete."
+                            }
                         } catch {
                             backupStatusMessage = "Import failed: \(error.localizedDescription)"
                         }
@@ -2089,6 +2635,28 @@ struct SettingsView: View {
                     Text("No backup file available to share.")
                 }
             }
+            .confirmationDialog("Delete Player", isPresented: $isShowingDeletePlayerDialog, titleVisibility: .visible) {
+                ForEach(viewModel.players) { player in
+                    Button(viewModel.displayLabel(for: player), role: .destructive) {
+                        viewModel.deletePlayer(playerID: player.id)
+                        backupStatusMessage = "Deleted \(player.name)."
+                    }
+                }
+
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("Choose a player to delete.")
+            }
+            .confirmationDialog("Delete All Player Data?", isPresented: $isShowingDeletePlayerDataConfirmation, titleVisibility: .visible) {
+                Button("Delete All Player Data", role: .destructive) {
+                    viewModel.deleteAllPlayerData()
+                    backupStatusMessage = "All player data deleted."
+                }
+
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("This will permanently delete all players, batting order, field lineups, pitcher/catcher selections, DH settings, and inning data for the current team.")
+            }
         }
     }
 }
@@ -2096,8 +2664,7 @@ struct SettingsView: View {
 // MARK: - Preview
 
 #Preview {
-    ContentView()
+    RootView()
 }
-
 
 

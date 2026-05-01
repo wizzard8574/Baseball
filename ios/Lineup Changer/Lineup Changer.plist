@@ -7,11 +7,16 @@
 		<key>UIColorName</key>
 		<string>LaunchBackgroundBlack</string>
 		<key>UIImageName</key>
-		<string>LaunchImage</string>
+		<string>LCLogo</string>
 		<key>UIImageRespectsSafeAreaInsets</key>
 		<false/>
 		<key>UILaunchScreen</key>
 		<dict/>
+		<key>UINavigationBar</key>
+		<dict>
+			<key>UIImageName</key>
+			<string></string>
+		</dict>
 	</dict>
 </dict>
 </plist>

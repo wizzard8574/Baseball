@@ -11,7 +11,7 @@ import SwiftUI
 struct Lineup_Changer: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
         }
     }
 }
