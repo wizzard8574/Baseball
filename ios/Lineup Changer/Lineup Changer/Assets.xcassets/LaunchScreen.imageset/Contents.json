@@ -1,42 +1,42 @@
 {
   "images" : [
     {
-      "filename" : "NewSplashScreen.png",
+      "filename" : "Launch Screen.png",
       "idiom" : "universal",
       "scale" : "1x"
     },
     {
-      "filename" : "NewSplashScreen 1.png",
+      "filename" : "Launch Screen 1.png",
       "idiom" : "universal",
       "scale" : "2x"
     },
     {
-      "filename" : "NewSplashScreen 2.png",
+      "filename" : "Launch Screen 2.png",
       "idiom" : "universal",
       "scale" : "3x"
     },
     {
-      "filename" : "NewSplashScreen 3.png",
+      "filename" : "Launch Screen 3.png",
       "idiom" : "iphone",
       "scale" : "1x"
     },
     {
-      "filename" : "NewSplashScreen 4.png",
+      "filename" : "Launch Screen 4.png",
       "idiom" : "iphone",
       "scale" : "2x"
     },
     {
-      "filename" : "NewSplashScreen 5.png",
+      "filename" : "Launch Screen 5.png",
       "idiom" : "iphone",
       "scale" : "3x"
     },
     {
-      "filename" : "NewSplashScreen 6.png",
+      "filename" : "Launch Screen 6.png",
       "idiom" : "ipad",
       "scale" : "1x"
     },
     {
-      "filename" : "NewSplashScreen 7.png",
+      "filename" : "Launch Screen 7.png",
       "idiom" : "ipad",
       "scale" : "2x"
     }
@@ -44,8 +44,5 @@
   "info" : {
     "author" : "xcode",
     "version" : 1
-  },
-  "properties" : {
-    "preserves-vector-representation" : true
   }
 }
